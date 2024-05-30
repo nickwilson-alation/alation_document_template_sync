@@ -1,0 +1,1 @@
+# alation_document_template_sync
