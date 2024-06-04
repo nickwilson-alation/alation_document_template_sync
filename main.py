@@ -1,63 +1,10 @@
 import argparse
 import os
 import requests
+import json
 
-# def fetch_all_datasources(base_url, headers):
-#     url = f'https://{base_url}/integration/v2/datasource/'
-#     response = requests.get(url, headers=headers)
-
-#     if response.status_code == 200:
-#         data = response.json()
-#         return data
-
-# def did_last_mde_job_succeed_by_ds_id(ds_id, base_url, headers):
-#     url = f'https://{base_url}/api/v1/job/?job_type=0&external_service_otype=data&external_service_aid={ds_id}&skip=0&limit=1&order_by=-ts_started&with_num_errors=true&enable_server_count=true'
-#     response = requests.get(url, headers=headers)
-#     last_job_status = ''
-
-#     if response.status_code == 200:
-#         data = response.json()
-#         if len(data) > 0:
-#             last_job_status = data[0]["status"]
-#             print(f'Last job status: {last_job_status}')
-#         else: # MDE has never ran on the source; skip the rest
-#             return True
-              
-#     if last_job_status == 'SUCCEEDED':
-#         return True
-#     else: 
-#         return False
-
-# def get_ds_owner_email_address_by_user_id(user_id, base_url, headers):
-#     owner_email_address = ''
-#     url = f'https://{base_url}/integration/v1/user/{user_id}'
-#     response = requests.get(url, headers=headers)
-
-#     if response.status_code == 200:
-#         data = response.json()
-#         owner_email_address = data['email']
-
-#     return owner_email_address
-
-# def get_email_owner_addresses_by_ds(ds, base_url, headers):
-#     ds_owner_email_addresses = []
-#     for user_id in ds['owner_ids']:   
-#         ds_owner_email_address = get_ds_owner_email_address_by_user_id(user_id, base_url, headers)
-#         ds_owner_email_addresses.append(ds_owner_email_address)
-#     return ds_owner_email_addresses
-
-# def email_admins_by_email_address(ds, ds_owner_email_addresses):
-#     ds_title = ds['title']
-#     ds_id = ds['id']
-#     subject = f'Last Metadata Extraction (MDE) Job Failed for Data Source: "{ds_title}" (DS ID: {ds_id})'
-#     body = f'Last Metadata Extraction (MDE) Job Failed for Data Source: "{ds_title}" (DS ID: {ds_id})'
-#     send_email_by_addresses_subject_and_body(ds_owner_email_addresses, subject, body)
-
-# def send_email_by_addresses_subject_and_body(email_addresses, subject, body):
-#     print('Skipping email, as function not yet implemented')
-#     print(f'Recipients: {email_addresses}')
-#     print(f'Subject: {subject}')
-#     print(f'Body: {body}')
+def pretty_print_json(json_to_print):
+    return json.dumps(json_to_print, indent=4)
 
 def fetch_all_document_hubs(base_url, headers):
     url = f'https://{base_url}/api/v1/collection_type/'
@@ -65,6 +12,51 @@ def fetch_all_document_hubs(base_url, headers):
     if response.status_code == 200:
         data = response.json()
     return data
+
+def fetch_all_custom_template_mapping(base_url, headers):
+    url = f'https://{base_url}/api/v1/custom_template_sub_type_mapping/'
+    response = requests.get(url, headers=headers)
+    if response.status_code == 200:
+        data = response.json()
+    return data
+
+def fetch_all_custom_templates(base_url, headers):
+    url = f'https://{base_url}/ajax/custom_template/'
+    response = requests.get(url, headers=headers)
+    if response.status_code == 200:
+        data = response.json()
+    return data
+
+def fetch_visual_config_by_id(base_url, headers, id):
+    url = f'https://{base_url}/api/v2/visual_config/{id}/'
+    response = requests.get(url, headers=headers)
+    if response.status_code == 200:
+        data = response.json()
+    return data
+
+def get_primary_template_hub(all_document_hubs):
+    if len(all_document_hubs) > 0:
+        for hub in all_document_hubs:
+            if hub['top_level_nav_name'] == 'Primary Glossary Templates':
+                return hub
+            
+def get_child_glossary_hubs_from_all_document_hubs(all_document_hubs):
+    all_glossary_hubs = []
+    if len(all_document_hubs) > 0:
+        for hub in all_document_hubs:
+            if hub['top_level_nav_name'].endswith('Glossary'):
+                all_glossary_hubs.append(hub)
+    return all_glossary_hubs
+
+def get_primary_hub_templates(primary_glossary_template_hub, custom_template_mapping, all_custom_templates):
+    glossary_template_hub_templates = []
+    # 1. Loop through template mapping:
+    for mapping in custom_template_mapping:
+        if mapping['sub_type'] == primary_glossary_template_hub['id']:
+            for template in all_custom_templates:
+                if template['id'] == mapping['custom_template_id']:
+                    glossary_template_hub_templates.append(template)
+    return glossary_template_hub_templates
 
 def main():
     # Create arg parser
@@ -96,9 +88,23 @@ def main():
         'accept': 'application/json, text/plain, */*'
     }
 
-    # 1. Get all Document Hubs
+    # 1. Get all Document Hubs and sort into Glossary Template hub and other glossary hubs:
     all_doc_hubs = fetch_all_document_hubs(base_url, headers)
-    print(all_doc_hubs)
+    primary_glossary_template_hub = get_primary_template_hub(all_doc_hubs)
+    child_glossary_hubs = get_child_glossary_hubs_from_all_document_hubs(all_doc_hubs)
+
+    # 2. Get all primary Glossary Hub templates
+    all_custom_templates = fetch_all_custom_templates(base_url, headers)
+    template_mapping = fetch_all_custom_template_mapping(base_url, headers)
+    primary_hub_templates = get_primary_hub_templates(primary_glossary_template_hub, template_mapping, all_custom_templates)
+    
+    # 3. Apply each primary template to all child hubs
+
+    # 3.1 Iterate through each primary template
+    for primary_template in primary_hub_templates:
+        primary_template_title = primary_template['title']
+        visual_config = fetch_visual_config_by_id(base_url, headers, primary_template['visual_config_id'])
+        print(f'visual_config for {primary_template_title}: {pretty_print_json(visual_config)}')
 
 if __name__ == "__main__":
     main()
